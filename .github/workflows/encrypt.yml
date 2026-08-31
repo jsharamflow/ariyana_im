@@ -1,0 +1,43 @@
+name: Encrypt and publish
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Encrypt
+        env:
+          PW_BASE: ${{ secrets.PW_BASE }}
+          PW_1B: ${{ secrets.PW_1B }}
+          PW_NOFLOW: ${{ secrets.PW_NOFLOW }}
+        run: |
+          set -e
+          for s in PW_BASE PW_1B PW_NOFLOW; do
+            if [ -z "${!s}" ]; then echo "::error::Repository secret $s is not set (Settings -> Secrets and variables -> Actions)"; exit 1; fi
+          done
+          mkdir -p out/base out/1b out/noflow
+          enc () {  # src pw outdir extra-args...
+            local src="$1" pw="$2" dir="$3"; shift 3
+            npx --yes staticrypt "$src" -p "$pw" -d /tmp/e \
+              --template-title "Ariyana Tower - Private Access" \
+              --template-instructions "This memorandum is private and confidential. Enter the access phrase provided to you." "$@"
+            mv "/tmp/e/$(basename "$src")" "$dir/index.html"
+          }
+          enc src/base.html   "$PW_BASE"   out/base   --template-color-primary "#E89700" --template-color-secondary "#2A2118"
+          enc src/1b.html     "$PW_1B"     out/1b     --template-color-primary "#E89700" --template-color-secondary "#2A2118"
+          enc src/noflow.html "$PW_NOFLOW" out/noflow
+          for d in base 1b noflow; do cp static/vercel.json static/robots.txt "out/$d/"; done
+      - name: Publish deploy branch
+        run: |
+          cd out
+          git init -q -b deploy
+          git -c user.email="actions@github.com" -c user.name="github-actions" add -A
+          git -c user.email="actions@github.com" -c user.name="github-actions" commit -qm "Encrypted build ${GITHUB_SHA::7}"
+          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
